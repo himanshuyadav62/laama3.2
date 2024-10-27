@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" xml:lang="en">
+<head>
+    <title>Ollama Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+    <style>
+        .chat-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-wrap: break-word;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: 20%;
+        }
+        .assistant-message {
+            background-color: #f5f5f5;
+            margin-right: 20%;
+        }
+        #message-input {
+            width: 80%;
+            padding: 10px;
+        }
+        button {
+            padding: 10px 20px;
+        }
+        .conversation-list {
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .conversation-item {
+            cursor: pointer;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        .conversation-item:hover {
+            background-color: #e9ecef;
+        }
+        .conversation-item.active {
+            background-color: #007bff;
+            color: white;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .message pre {
+            background-color: #f8f9fa;
+            padding: 1em;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .message code {
+            background-color: rgba(0,0,0,0.05);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-size: 85%;
+        }
+        .message pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+        .message p {
+            margin: 0.5em 0;
+        }
+        .message ul, .message ol {
+            margin: 0.5em 0;
+            padding-left: 2em;
+        }
+        .message h1, .message h2, .message h3, .message h4 {
+            margin: 0.5em 0;
+        }
+        .message table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 0.5em 0;
+        }
+        .message th, .message td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .message th {
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="controls">
+            <button onclick="createNewConversation()">New Conversation</button>
+            <select id="conversation-selector" onchange="switchConversation(this.value)">
+                <option value="">Select a conversation</option>
+            </select>
+        </div>
+        <div id="chat-messages"></div>
+        <div style="margin-top: 20px;">
+            <input type="text" id="message-input" placeholder="Type your message...">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        let conversations = {};
+        let currentConversationId = null;
+
+        marked.setOptions({
+            highlight: function(code, language) {
+                if (language && hljs.getLanguage(language)) {
+                    return hljs.highlight(code, { language }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true,
+            gfm: true
+        });
+
+        window.onload = function() {
+            const savedConversations = localStorage.getItem('conversations');
+            if (savedConversations) {
+                conversations = JSON.parse(savedConversations);
+                updateConversationSelector();
+            }
+
+            currentConversationId = localStorage.getItem('currentConversationId');
+            if (currentConversationId && conversations[currentConversationId]) {
+                document.getElementById('conversation-selector').value = currentConversationId;
+                loadConversationHistory(currentConversationId);
+            } else {
+                createNewConversation();
+            }
+        };
+
+        function getConversationPreview(conversation) {
+            if (!conversation.messages || conversation.messages.length === 0) {
+                return "New Conversation";
+            }
+            const firstUserMessage = conversation.messages.find(msg => msg.role === 'user');
+            if (!firstUserMessage) {
+                return "New Conversation";
+            }
+            return firstUserMessage.content.slice(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '');
+        }
+
+        function createNewConversation() {
+            const newId = 'conv_' + Date.now();
+            conversations[newId] = {
+                id: newId,
+                messages: [],
+                created_at: new Date().toISOString()
+            };
+            saveConversations();
+            currentConversationId = newId;
+            localStorage.setItem('currentConversationId', newId);
+            updateConversationSelector();
+            loadConversationHistory(newId);
+        }
+
+        function updateConversationSelector() {
+            const selector = document.getElementById('conversation-selector');
+            selector.innerHTML = '<option value="">Select a conversation</option>';
+            
+            // Sort conversations by creation date, newest first
+            const sortedConversations = Object.entries(conversations)
+                .sort(([,a], [,b]) => new Date(b.created_at) - new Date(a.created_at));
+
+            sortedConversations.forEach(([convId, conv]) => {
+                const preview = getConversationPreview(conv);
+                const option = document.createElement('option');
+                option.value = convId;
+                option.textContent = preview === "New Conversation" ? 
+                    "New Conversation" : 
+                    `${preview} (${new Date(conv.created_at).toLocaleDateString()})`;
+                if (convId === currentConversationId) {
+                    option.selected = true;
+                }
+                selector.appendChild(option);
+            });
+        }
+
+        function switchConversation(conversationId) {
+            if (!conversationId) return;
+            currentConversationId = conversationId;
+            localStorage.setItem('currentConversationId', conversationId);
+            loadConversationHistory(conversationId);
+        }
+
+        function loadConversationHistory(conversationId) {
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML = '';
+            
+            if (conversations[conversationId]) {
+                conversations[conversationId].messages.forEach(msg => {
+                    chatMessages.appendChild(createMessageElement(msg.content, msg.role === 'user'));
+                });
+            }
+        }
+
+        function saveConversations() {
+            localStorage.setItem('conversations', JSON.stringify(conversations));
+        }
+
+        function createMessageElement(content, isUser) {
+            const div = document.createElement('div');
+            div.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+            div.innerHTML = isUser ? escapeHtml(content) : marked.parse(content);
+            return div;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('message-input');
+            const message = input.value.trim();
+            
+            if (!message || !currentConversationId) return;
+            
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.appendChild(createMessageElement(message, true));
+            
+            if (!conversations[currentConversationId].messages) {
+                conversations[currentConversationId].messages = [];
+            }
+            conversations[currentConversationId].messages.push({
+                role: 'user',
+                content: message,
+                timestamp: new Date().toISOString()
+            });
+            saveConversations();
+            updateConversationSelector();
+            
+            input.value = '';
+
+            const assistantContainer = document.createElement('div');
+            assistantContainer.className = 'message assistant-message';
+            chatMessages.appendChild(assistantContainer);
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        prompt: message,
+                        conversation_id: currentConversationId
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let assistantResponse = '';
+
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+                    
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            assistantResponse += data.chunk;
+                            assistantContainer.innerHTML = marked.parse(assistantResponse);
+                        }
+                    }
+                }
+
+                conversations[currentConversationId].messages.push({
+                    role: 'assistant',
+                    content: assistantResponse,
+                    timestamp: new Date().toISOString()
+                });
+                saveConversations();
+
+            } catch (error) {
+                console.error('Error:', error);
+                assistantContainer.textContent = 'Error: Failed to get response';
+            }
+
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        document.getElementById('message-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
